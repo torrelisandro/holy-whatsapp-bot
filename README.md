@@ -109,5 +109,5 @@ En fase de prueba. El producto para talleres no se está comercializando; HOLY.s
 
 Diseñado y desarrollado en pareja, con desarrollo asistido por IA (Claude Code y Claude Cowork). Joaquín integra y versiona el código del repositorio.
 
-- **Lisandro Torre** — co-diseño y co-desarrollo; producto, alta de talleres y comercialización · [github.com/torrelisandro](https://github.com/torrelisandro)
-- **Joaquín Abbona** — co-diseño y co-desarrollo; integración y control de versiones · [github.com/joaquinabbona](https://github.com/joaquinabbona)
+- **Lisandro Torre** — diseño y desarrollo de todo el sistema, a la par de Joaquín. Además: producto, alta de talleres y comercialización · [github.com/torrelisandro](https://github.com/torrelisandro)
+- **Joaquín Abbona** — diseño y desarrollo de todo el sistema, a la par de Lisandro. Además: integración y control de versiones del código · [github.com/joaquinabbona](https://github.com/joaquinabbona)
