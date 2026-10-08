@@ -93,6 +93,14 @@ const expectedSig = "sha256=" +
 if (!timingSafeEqual(expectedSig, sigHeader)) return jsonResponse(req, { error: "unauthorized" }, 401);
 ```
 
+## Limitaciones conocidas y próximos pasos
+
+**El taller tiene que dejar de usar WhatsApp en el celular.** Para conectar un número a la Cloud API, el dueño debe borrar su cuenta de WhatsApp del teléfono. Desde ahí atiende a sus clientes desde Chatwoot, una herramienta que funciona bien pero a la que el mecánico no está acostumbrado. La alternativa es WhatsApp Coexistence, que permite usar la app y la API sobre el mismo número. No la conocíamos al arrancar y, cuando la evaluamos, no servía para nuestro público: Meta exige que el negocio ya use la app de WhatsApp Business de forma constante y con antigüedad, y muchos talleres no cumplen eso. Es la primera mejora para un taller que ya la use.
+
+**Alta manual de cada taller.** Hoy dar de alta un taller lleva varios pasos manuales entre Meta, Chatwoot y la base de datos. El paso siguiente está diseñado: Embedded Signup de Meta, para que el mecánico conecte su propio número desde el panel en pocos minutos y sea dueño de su cuenta de WhatsApp Business.
+
+**Una sola cuenta de WhatsApp Business para todos los talleres.** Simplifica el arranque, pero sin la verificación del negocio Meta limita la cantidad de números. Embedded Signup también resuelve esto, porque cada taller pasa a tener su propia cuenta.
+
 ## Estado
 
 En fase de prueba. El producto para talleres no se está comercializando; HOLY.systems hoy se dedica a software a medida y consultoría en IA.
