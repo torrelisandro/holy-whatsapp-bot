@@ -15,7 +15,7 @@ Un taller chico recibe consultas por WhatsApp todo el día mientras el mecánico
 ## Arquitectura
 
 ```mermaid
-flowchart LR
+flowchart TD
     C[Cliente en WhatsApp] -->|mensaje| M[Meta WhatsApp Cloud API]
     M -->|webhook firmado HMAC| W[Edge Function<br/>whatsapp-webhook]
     W --> D{Detectores previos<br/>sin costo de tokens}
