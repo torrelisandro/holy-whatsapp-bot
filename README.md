@@ -1,77 +1,79 @@
-# Holy — asistente de WhatsApp con IA para talleres mecánicos
+# Holy — AI-powered WhatsApp assistant for auto repair shops
 
-Plataforma multi-tenant que atiende por WhatsApp a los clientes de talleres mecánicos: toma la consulta, junta los datos del auto y del problema, propone turno y le entrega al mecánico la consulta ya estructurada en su panel. Cuando hace falta una persona, la conversación pasa a una bandeja de atención humana sin perder el historial.
+*[Leer en español](README.es.md)*
 
-Desarrollado por **Lisandro Torre** y **Joaquín Abbona** en [HOLY.systems](https://holysystems.com.ar), Mar del Plata, 2026.
+A multi-tenant platform that answers auto repair shop customers on WhatsApp: it takes the inquiry, collects the car and problem details, proposes an appointment and hands the mechanic a structured work order in their dashboard. When a human is needed, the conversation moves to a human inbox with its full history.
 
-> Este repositorio documenta la arquitectura y las decisiones de diseño del sistema, con fragmentos representativos. El código completo es privado y está disponible para revisión a pedido.
+Built by **Lisandro Torre** and **Joaquín Abbona** at [HOLY.systems](https://holysystems.com.ar), Mar del Plata, Argentina, 2026.
+
+> This repository documents the system's architecture and design decisions, with representative code excerpts. The full source code is private and available for review on request.
 
 ---
 
-## El problema
+## The problem
 
-Un taller chico recibe consultas por WhatsApp todo el día mientras el mecánico está con las manos en un motor. Las respuestas llegan tarde, los datos quedan desparramados en el chat y los turnos se pierden. Holy contesta al instante, pregunta lo que el mecánico necesita saber y deja cada consulta registrada como un pedido de trabajo.
+A small repair shop gets WhatsApp inquiries all day while the mechanic has their hands in an engine. Replies arrive late, the details end up scattered across the chat and appointments get lost. Holy replies instantly, asks what the mechanic needs to know and records every inquiry as a work order.
 
-## Arquitectura
+## Architecture
 
 ```mermaid
 flowchart TD
-    C[Cliente en WhatsApp] -->|mensaje| M[Meta WhatsApp Cloud API]
-    M -->|webhook firmado HMAC| W[Edge Function<br/>whatsapp-webhook]
-    W --> D{Detectores previos<br/>sin costo de tokens}
-    D -->|ok| L[LLM GPT-4.1<br/>con prompt caching]
-    D -->|injection / loop / tope de gasto| H
-    L -->|respuesta| M
-    L -->|consulta cerrada| X[Extracción estructurada<br/>2da llamada al LLM]
+    C[Customer on WhatsApp] -->|message| M[Meta WhatsApp Cloud API]
+    M -->|HMAC-signed webhook| W[Edge Function<br/>whatsapp-webhook]
+    W --> D{Pre-LLM detectors<br/>zero token cost}
+    D -->|ok| L[LLM GPT-4.1<br/>with prompt caching]
+    D -->|injection / loop / spend cap| H
+    L -->|reply| M
+    L -->|inquiry closed| X[Structured extraction<br/>2nd LLM call]
     X --> DB[(PostgreSQL<br/>multi-tenant + RLS)]
-    X --> H[Chatwoot<br/>bandeja humana]
-    H -->|respuesta del mecánico| M
-    DB --> P[Panel web del taller<br/>React + Vite]
-    CR[pg_cron] -->|recordatorios y reseñas| M
+    X --> H[Chatwoot<br/>human inbox]
+    H -->|mechanic's reply| M
+    DB --> P[Shop web dashboard<br/>React + Vite]
+    CR[pg_cron] -->|reminders and reviews| M
 ```
 
-**Stack:** TypeScript · React 18 + Vite · Tailwind + shadcn/ui · React Query · Supabase (PostgreSQL, Edge Functions en Deno, Row Level Security, pg_cron) · OpenAI GPT-4.1 · Chatwoot self-hosted · Meta WhatsApp Cloud API · Vercel
+**Stack:** TypeScript · React 18 + Vite · Tailwind + shadcn/ui · React Query · Supabase (PostgreSQL, Deno Edge Functions, Row Level Security, pg_cron) · OpenAI GPT-4.1 · self-hosted Chatwoot · Meta WhatsApp Cloud API · Vercel
 
-**Desarrollo asistido por IA:** Claude Code · Claude Cowork. Todo el sistema se construyó trabajando con agentes de IA: nosotros definimos la arquitectura, las decisiones y las pruebas con conversaciones reales; los agentes aceleraron la escritura del código.
+**AI-assisted development:** Claude Code · Claude Cowork. The whole system was built working with AI agents: we defined the architecture, the decisions and the tests with real conversations; the agents sped up writing the code.
 
-## Decisiones técnicas
+## Technical decisions
 
-**API oficial de Meta, sin intermediarios.** Integración directa con WhatsApp Cloud API en vez de un BSP (Twilio, 360dialog) o un gateway no oficial. Los intermediarios cobran por número y por mes, y rompen la economía de un producto pensado para talleres chicos.
+**Official Meta API, no middlemen.** Direct integration with the WhatsApp Cloud API instead of a BSP (Twilio, 360dialog) or an unofficial gateway. Middlemen charge per number and per month, which breaks the economics of a product built for small shops.
 
-**Multi-tenant con aislamiento en tres capas.** Cada taller ve solo lo suyo: en la base, por Row Level Security filtrando por `workshop_id`; en la bandeja de atención, con una cuenta de Chatwoot por taller; y en las funciones del backend, con verificación de JWT y chequeo de tenant antes de cada operación.
+**Multi-tenant with three layers of isolation.** Each shop only sees its own data: in the database, through Row Level Security filtering by `workshop_id`; in the inbox, with one Chatwoot account per shop; and in the backend functions, with JWT verification and a tenant check before every operation.
 
-**Agrupación de mensajes antes de responder.** La gente escribe por WhatsApp en ráfagas: "hola", "tengo un gol", "hace ruido al frenar". Responder mensaje por mensaje hacía que el bot sonara robótico y contestara a medias. Lo resolvimos después de probarlo con conversaciones reales: cada mensaje entrante espera 10 segundos y después intenta tomar un lock atómico sobre la conversación en PostgreSQL. Solo un proceso lo consigue; ese lee el historial completo, con todos los mensajes de la ráfaga, y hace una única llamada al modelo. Los demás terminan sin gastar tokens.
+**Message batching before replying.** People write on WhatsApp in bursts: "hi", "I have a Gol", "it makes a noise when braking". Replying message by message made the bot sound robotic and answer half the question. We solved it after testing with real conversations: each incoming message waits 10 seconds and then tries to take an atomic lock on the conversation in PostgreSQL. Only one process gets it; that one reads the full history, including every message in the burst, and makes a single model call. The others exit without spending tokens.
 
-**Defensas antes del LLM, en código.** Antes de gastar un solo token, el webhook corre detectores propios: intentos de prompt injection, cancelaciones, bucles de conversación y spam de baja frecuencia que no llega a disparar el rate limit. El system prompt es la defensa secundaria, no la principal.
+**Defenses before the LLM, in code.** Before spending a single token, the webhook runs its own detectors: prompt-injection attempts, cancellations, conversation loops and low-frequency spam that doesn't trigger the rate limit. The system prompt is the secondary defense, not the main one.
 
-**Costo controlado por diseño.** Las variables de cada taller van al final del system prompt para maximizar el cache hit (75 % de descuento en tokens cacheados). Cada taller tiene un tope de gasto mensual en IA: al superarlo, el bot se apaga y todo pasa a atención humana. Costo variable estimado: unos USD 15 por taller por mes, entre IA y mensajes plantilla de Meta.
+**Cost under control by design.** Each shop's variables go at the end of the system prompt to maximize cache hits (75% discount on cached tokens). Each shop has a monthly AI spending cap: once exceeded, the bot turns off and everything goes to human support. Estimated variable cost: about USD 15 per shop per month, between AI and Meta template messages.
 
-**Cierre de conversación con extracción estructurada.** Cuando el bot termina de juntar los datos, emite una señal de cierre. El sistema la quita del mensaje visible, hace una segunda llamada al modelo solo sobre los últimos mensajes para extraer marca, modelo, año, problema y turno preferido, crea el pedido en la base y transfiere la conversación a la bandeja humana con el historial como nota privada.
+**Conversation close with structured extraction.** When the bot finishes collecting the details, it emits a close signal. The system strips it from the visible message, makes a second model call over the last messages only to extract make, model, year, problem and preferred appointment, creates the order in the database and transfers the conversation to the human inbox with the history as a private note.
 
-**Ciclo de vida completo, no solo un chat.** El pedido avanza por estados (pendiente → confirmado → en reparación → reparado → completado). Tareas programadas mandan el recordatorio del turno 24 h antes, avisan cuando el auto está listo y piden una reseña al día siguiente de terminado el trabajo.
+**Full lifecycle, not just a chat.** Orders move through states (pending → confirmed → in repair → repaired → completed). Scheduled jobs send the appointment reminder 24 hours before, notify when the car is ready and ask for a review the day after the job is done.
 
-**Seguridad.** Verificación HMAC de cada webhook de Meta; autenticación servidor a servidor entre funciones; tokens rotados después de una auditoría propia; datos personales enmascarados en los logs (teléfonos reducidos a sus últimos 4 dígitos); errores genéricos hacia el usuario final; CORS restrictivo y headers de seguridad HTTP.
+**Security.** HMAC verification of every Meta webhook; server-to-server authentication between functions; tokens rotated after an internal audit; personal data masked in logs (phone numbers reduced to their last 4 digits); generic errors toward end users; restrictive CORS and HTTP security headers.
 
-## Fragmentos de código
+## Code excerpts
 
-**Agrupación de ráfagas + lock por conversación** (`whatsapp-webhook`)
+**Burst batching + per-conversation lock** (`whatsapp-webhook`)
 
 ```ts
-// Esperar 10 segundos para agrupar mensajes rápidos del mismo cliente
+// Wait 10 seconds to batch quick messages from the same customer
 await new Promise((r) => setTimeout(r, 10000));
 
-// Lock atómico: solo un webhook procesa la conversación
+// Atomic lock: only one webhook processes the conversation
 const { data: lockResult } = await supabase.rpc("try_lock_for_ai", {
   p_conversation_id: conversationId,
 });
 
 if (!lockResult) {
-  // Otro webhook ya tomó la conversación y va a leer este mensaje en el historial
+  // Another webhook already took the conversation and will read this message from the history
   return jsonResponse(req, { ok: true });
 }
 ```
 
-**Verificación de la firma de Meta, fail-closed** (`whatsapp-webhook`)
+**Meta signature verification, fail-closed** (`whatsapp-webhook`)
 
 ```ts
 const metaAppSecret = Deno.env.get("META_APP_SECRET");
@@ -89,25 +91,25 @@ const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBo
 const expectedSig = "sha256=" +
   Array.from(new Uint8Array(mac)).map((b) => b.toString(16).padStart(2, "0")).join("");
 
-// Comparación en tiempo constante para no filtrar información por timing
+// Constant-time comparison so no information leaks through timing
 if (!timingSafeEqual(expectedSig, sigHeader)) return jsonResponse(req, { error: "unauthorized" }, 401);
 ```
 
-## Limitaciones conocidas y próximos pasos
+## Known limitations and next steps
 
-**El taller tiene que dejar de usar WhatsApp en el celular.** Para conectar un número a la Cloud API, el dueño debe borrar su cuenta de WhatsApp del teléfono. Desde ahí atiende a sus clientes desde Chatwoot, una herramienta que funciona bien pero a la que el mecánico no está acostumbrado. La alternativa es WhatsApp Coexistence, que permite usar la app y la API sobre el mismo número. No la conocíamos al arrancar y, cuando la evaluamos, no servía para nuestro público: Meta exige que el negocio ya use la app de WhatsApp Business de forma constante y con antigüedad, y muchos talleres no cumplen eso. Es la primera mejora para un taller que ya la use.
+**The shop has to stop using WhatsApp on its phone.** To connect a number to the Cloud API, the owner must delete their WhatsApp account from the phone. From then on they serve customers from Chatwoot, a tool that works well but that mechanics aren't used to. The alternative is WhatsApp Coexistence, which allows using the app and the API on the same number. We didn't know about it when we started and, when we evaluated it, it didn't fit our audience: Meta requires the business to already use the WhatsApp Business app consistently and for some time, and many shops don't meet that. It's the first improvement for a shop that already uses it.
 
-**Alta manual de cada taller.** Hoy dar de alta un taller lleva varios pasos manuales entre Meta, Chatwoot y la base de datos. El paso siguiente está diseñado: Embedded Signup de Meta, para que el mecánico conecte su propio número desde el panel en pocos minutos y sea dueño de su cuenta de WhatsApp Business.
+**Manual onboarding for each shop.** Today, onboarding a shop takes several manual steps across Meta, Chatwoot and the database. The next step is designed: Meta's Embedded Signup, so the mechanic connects their own number from the dashboard in a few minutes and owns their WhatsApp Business account.
 
-**Una sola cuenta de WhatsApp Business para todos los talleres.** Simplifica el arranque, pero sin la verificación del negocio Meta limita la cantidad de números. Embedded Signup también resuelve esto, porque cada taller pasa a tener su propia cuenta.
+**A single WhatsApp Business account for all shops.** It simplifies getting started, but without business verification Meta limits the number of phone numbers. Embedded Signup solves this too, because each shop gets its own account.
 
-## Estado
+## Status
 
-En fase de prueba. El producto para talleres no se está comercializando; HOLY.systems hoy se dedica a software a medida y consultoría en IA.
+In testing. The product for repair shops is not being sold; HOLY.systems currently focuses on custom software and AI consulting.
 
-## Autores
+## Authors
 
-Diseñado y desarrollado en pareja, con desarrollo asistido por IA (Claude Code y Claude Cowork). Joaquín integra y versiona el código del repositorio.
+Designed and developed as a pair, with AI-assisted development (Claude Code and Claude Cowork). Joaquín integrates and versions the repository code.
 
-- **Lisandro Torre** — diseño y desarrollo de todo el sistema, a la par de Joaquín. Además: producto, alta de talleres y comercialización · [github.com/torrelisandro](https://github.com/torrelisandro)
-- **Joaquín Abbona** — diseño y desarrollo de todo el sistema, a la par de Lisandro. Además: integración y control de versiones del código · [github.com/joaquinabbona](https://github.com/joaquinabbona)
+- **Lisandro Torre** — design and development of the whole system, alongside Joaquín. Also: product, shop onboarding and sales · [github.com/torrelisandro](https://github.com/torrelisandro)
+- **Joaquín Abbona** — design and development of the whole system, alongside Lisandro. Also: code integration and version control · [github.com/joaquinabbona](https://github.com/joaquinabbona)
